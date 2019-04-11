@@ -1,16 +1,15 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import os
-import lmdb  # install lmdb by "pip install lmdb"
-import cv2
-import numpy as np
-import tools.dataset as dataset
 import io
+import os
 import sys
 
+import cv2
+import lmdb  # install lmdb by "pip install lmdb"
+import numpy as np
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-import torch
 
 
 def checkImageIsValid(imageBin):
@@ -92,20 +91,16 @@ def createDataset(outputPath, imagePathList, labelList, lexiconList=None, checkV
     print('Created dataset with %d samples' % nSamples)
 
 
-def read_lmdb():
-    # 读取IMDB格式的数据，并调整大小
-    train_nips_dataset = dataset.lmdbDataset(root='./temp_output')
-    return train_nips_dataset
-
-
 if __name__ == '__main__':
-    result1 = list()
-    result2 = list()
-    with open('./ArTtrain.txt', 'r', encoding='utf-8') as file:
-        for line in file:
-            item = line.strip().split(' ', 1)
-            result1.append(item[0])
-            result2.append(item[1])
-    # print(result1[:100])
-    # print(result2[:100])
-    createDataset('./temp_output', result1, result2)
+    env = lmdb.open('ArTtest', max_readers=1, readonly=True, lock=False, readahead=False, meminit=False)
+    with env.begin(write=False) as txn:
+        # nSamples = txn.get('nSamples'.encode())
+        # img_buf = txn.get(('gt_%d' % 1).encode())
+        # buf = six.BytesIO()
+        # buf.write(img_buf)
+        # buf.seek(0)
+        # img = np.array(Image.open(buf))
+        lmdb_cursor = txn.cursor()
+        for key, val in lmdb_cursor:
+            print(key)
+    # print(img.shape)

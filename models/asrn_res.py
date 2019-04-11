@@ -131,6 +131,7 @@ class Attention(nn.Module):
             hidden = Variable(torch.zeros(nB, hidden_size).type_as(feats.data))
             targets_temp = Variable(torch.zeros(nB).long().contiguous())
             probs = Variable(torch.zeros(nB * num_steps, self.num_classes))
+            output_alpha = Variable(torch.zeros(num_steps, nT, nB)).type_as(feats.data)
             if self.cuda:
                 targets_temp = targets_temp.cuda()
                 probs = probs.cuda()
@@ -138,6 +139,7 @@ class Attention(nn.Module):
             for i in range(num_steps):
                 cur_embeddings = self.char_embeddings.index_select(0, targets_temp)
                 hidden, alpha = self.attention_cell(hidden, feats, cur_embeddings, test)
+                output_alpha[i] = alpha
                 hidden2class = self.generator(hidden)
                 probs[i * nB:(i + 1) * nB] = hidden2class
                 _, targets_temp = hidden2class.max(1)
@@ -152,9 +154,9 @@ class Attention(nn.Module):
             for length in text_length.data:
                 probs_res[start:start + length] = probs[b * num_steps:b * num_steps + length]
                 start = start + length
-                b = b + 1
+                b += 1
 
-            return probs_res
+            return probs_res, output_alpha
 
 
 class Residual_block(nn.Module):
@@ -319,7 +321,7 @@ class GRCNN(nn.Module):
 
 class ASRN(nn.Module):
 
-    def __init__(self, imgH, nc, nclass, nh, BidirDecoder=False, CUDA=True):
+    def __init__(self, imgH, nc, nclass, nh, CUDA=True):
         super(ASRN, self).__init__()
         assert imgH % 16 == 0, 'imgH must be a multiple of 16'
 
@@ -331,12 +333,8 @@ class ASRN(nn.Module):
             BidirectionalLSTM(nh, nh, nh),
         )
 
-        self.BidirDecoder = BidirDecoder
-        if self.BidirDecoder:
-            self.attentionL2R = Attention(nh, nh, nclass, 256, CUDA=CUDA)
-            self.attentionR2L = Attention(nh, nh, nclass, 256, CUDA=CUDA)
-        else:
-            self.attention = Attention(nh, nh, nclass, 256, CUDA=CUDA)
+        self.attentionL2R = Attention(nh, nh, nclass, 256, CUDA=CUDA)
+        self.attentionR2L = Attention(nh, nh, nclass, 256, CUDA=CUDA)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -357,13 +355,14 @@ class ASRN(nn.Module):
         # rnn features
         rnn = self.rnn(conv)
 
-        if self.BidirDecoder:
+        if test:
+            outputL2R, alpha0 = self.attentionL2R(rnn, length, text, test)
+            outputR2L, alpha1 = self.attentionR2L(rnn, length, text_rev, test)
+            return outputL2R, alpha0, outputR2L, alpha1
+        else:
             outputL2R = self.attentionL2R(rnn, length, text, test)
             outputR2L = self.attentionR2L(rnn, length, text_rev, test)
             return outputL2R, outputR2L
-        else:
-            output = self.attention(rnn, length, text, test)
-            return output
 
 
 if __name__ == '__main__':

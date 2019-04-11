@@ -1,7 +1,12 @@
-import torch
-import torch.nn as nn
-from torch.autograd import Variable
 import collections
+
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import numpy as np
+import torch
+from PIL import Image
+from six import BytesIO
+from torch.autograd import Variable
 
 
 class strLabelConverterForAttention(object):
@@ -76,7 +81,7 @@ class strLabelConverterForAttention(object):
             length = [len(s) for s in text]
             text = ''.join(text)
             text, _ = self.encode(text)
-        return (torch.LongTensor(text), torch.LongTensor(length))
+        return torch.LongTensor(text), torch.LongTensor(length)
 
     def decode(self, t, length):
         """Decode encoded texts back into strs.
@@ -141,3 +146,24 @@ class averager(object):
 
 def loadData(v, data):
     v.data.resize_(data.size()).copy_(data)
+
+
+def showAttention(input_sentence, output_words, attentions, img_shape):
+    # Set up figure with colorbar
+    plt.figure(figsize=img_shape)
+    buffer_ = BytesIO()
+    plt.matshow(attentions, cmap='gray')
+    # fig.colorbar(cax)
+
+    # Set up axes
+    # ax.set_xticklabels([''] + list(input_sentence) + ['<EOS>'], rotation=90)
+    # ax.set_yticklabels([''] + list(output_words))
+
+    # Show label at every tick
+    # ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
+    # ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+    plt.savefig(buffer_, format='png')
+    buffer_.seek(0)
+    data = Image.open(buffer_)
+    data = np.asarray(data)
+    return data

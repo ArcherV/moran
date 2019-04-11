@@ -14,7 +14,7 @@ from .words import word
 
 class lmdbDataset(Dataset):
 
-    def __init__(self, root=None, transform=None, reverse=False, alphabet=word):
+    def __init__(self, root=None, transform=None, alphabet=word):
         self.env = lmdb.open(
             root,
             max_readers=1,
@@ -24,7 +24,7 @@ class lmdbDataset(Dataset):
             meminit=False)
 
         if not self.env:
-            print('cannot creat lmdb from %s' % (root))
+            print('cannot creat lmdb from %s' % root)
             sys.exit(0)
 
         with self.env.begin(write=False) as txn:
@@ -33,7 +33,6 @@ class lmdbDataset(Dataset):
 
         self.transform = transform
         self.alphabet = alphabet
-        self.reverse = reverse
 
     def __len__(self):
         return self.nSamples
@@ -45,14 +44,14 @@ class lmdbDataset(Dataset):
         assert index <= len(self), 'index range error 报错index为 %d' % index
         index += 1
         with self.env.begin(write=False) as txn:
-            img_key = 'image-%09d' % index
+            # img_key = 'image-%09d' % index  # For training
+            img_key = 'gt_%d' % index
             imgbuf = txn.get(img_key.encode())
 
             buf = six.BytesIO()
             buf.write(imgbuf)
             buf.seek(0)
             try:
-                # img = Image.open(buf).convert('L')
                 img = Image.open(buf)
             except IOError:
                 print('Corrupted image for %d' % index)
@@ -66,18 +65,15 @@ class lmdbDataset(Dataset):
             # print("在tools.dataset里,label为",label)
             if len(label) <= 0:
                 return self[index + 1]
-            if self.reverse:
-                label_rev = label[-1::-1]
-                label_rev += '$'
+            label_rev = label[-1::-1]
+            label_rev += '$'
             label += '$'
 
-            if self.transform is not None:
+            if self.transform:
                 img = self.transform(img)
 
-        if self.reverse:
-            return img, label, label_rev
-        else:
-            return img, label
+        # return img, label, label_rev  # For training
+        return img_key, img, label, label_rev
 
 
 class resizeNormalize(object):

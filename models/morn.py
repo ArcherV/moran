@@ -156,6 +156,7 @@ class MORN(nn.Module):
                 # cv2.imwrite('attention_map', total_img)
 
             # return x_rectified, total_img
+
             return x_rectified
 
         return x_rectified
