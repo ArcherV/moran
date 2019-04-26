@@ -26,8 +26,8 @@ class MORN(nn.Module):
 
         self.pool = nn.MaxPool2d(2, 1)
 
-        h_list = np.arange(self.targetH) * 2. / (self.targetH - 1) - 1
-        w_list = np.arange(self.targetW) * 2. / (self.targetW - 1) - 1
+        h_list = np.arange(64) * 2. / (64 - 1) - 1
+        w_list = np.arange(200) * 2. / (200 - 1) - 1
 
         grid = np.meshgrid(
             w_list,
@@ -53,15 +53,12 @@ class MORN(nn.Module):
         if not test:
             enhance = 0
 
-        assert x.size(0) <= self.maxBatch
-        assert x.data.type() == self.inputDataType
-
         grid = self.grid[:x.size(0)]
         grid_x = self.grid_x[:x.size(0)]
         grid_y = self.grid_y[:x.size(0)]
-        x_small = nn.functional.interpolate(x, size=(self.targetH, self.targetW), mode='bilinear')
+        # x_small = nn.functional.interpolate(x, size=(self.targetH, self.targetW), mode='bilinear')
 
-        offsets = self.cnn(x_small)
+        offsets = self.cnn(x)
         offsets_posi = nn.functional.relu(offsets, inplace=False)
         offsets_nega = nn.functional.relu(-offsets, inplace=False)
         offsets_pool = self.pool(offsets_posi) - self.pool(offsets_nega)
@@ -88,6 +85,7 @@ class MORN(nn.Module):
             # offsets_x = torch.cat([grid_x, grid_y + offsets_grid], 3)
             x_rectified = nn.functional.grid_sample(x, offsets_x)
 
+        x_rectified = nn.functional.interpolate(x_rectified, size=(self.targetH, self.targetW), mode='bilinear')
         if debug:
 
             offsets_mean = torch.mean(offsets_grid.view(x.size(0), -1), 1)

@@ -1,15 +1,14 @@
 import random
 import sys
-
+import numpy as np
 import lmdb
-import six
+import cv2
 import torch
 import torchvision.transforms as transforms
-from PIL import Image
 from torch.utils.data import Dataset
 from torch.utils.data import sampler
 
-from .words import word
+from tools.words import word
 
 
 class lmdbDataset(Dataset):
@@ -39,26 +38,16 @@ class lmdbDataset(Dataset):
 
     def __getitem__(self, index):
         # print("在tools.dataset里,",index)
-        if index > len(self):
-            index = len(self) - 1
-        assert index <= len(self), 'index range error 报错index为 %d' % index
         index += 1
         with self.env.begin(write=False) as txn:
-            # img_key = 'image-%09d' % index  # For training
-            img_key = 'gt_%d' % index
-            imgbuf = txn.get(img_key.encode())
-
-            buf = six.BytesIO()
-            buf.write(imgbuf)
-            buf.seek(0)
-            try:
-                img = Image.open(buf)
-            except IOError:
-                print('Corrupted image for %d' % index)
-                return self[index + 1]
+            img_key = 'image-%09d' % index  # For training
+            # img_key = 'gt_%d' % index
+            imageBuf = np.fromstring(txn.get(img_key.encode()), dtype=np.uint8)
+            img = cv2.imdecode(imageBuf, cv2.IMREAD_COLOR)
 
             label_key = 'label-%09d' % index
             label = str(txn.get(label_key.encode()).decode('utf-8'))
+            # label = '1'
 
             label = ''.join(label[i] if label[i].lower() in self.alphabet else ''
                             for i in range(len(label)))
@@ -72,19 +61,18 @@ class lmdbDataset(Dataset):
             if self.transform:
                 img = self.transform(img)
 
-        # return img, label, label_rev  # For training
-        return img_key, img, label, label_rev
+        return img, label, label_rev  # For training
+        # return img_key, img, label, label_rev
 
 
 class resizeNormalize(object):
 
-    def __init__(self, size, interpolation=Image.BILINEAR):
+    def __init__(self, size):
         self.size = size
-        self.interpolation = interpolation
         self.toTensor = transforms.ToTensor()
 
     def __call__(self, img):
-        img = img.resize(self.size, self.interpolation)
+        img = cv2.resize(img, self.size)
         img = self.toTensor(img)
         img.sub_(0.5).div_(0.5)
         return img
@@ -114,3 +102,18 @@ class randomSequentialSampler(sampler.Sampler):
             index[(i + 1) * self.batch_size:] = tail_index
 
         return iter(index)
+
+
+def encode_coordinates_fn(net):
+    batch, _, h, w = net.shape
+    x, y = np.meshgrid(np.arange(w), np.arange(h))
+    x= torch.from_numpy(x.reshape(1, h, w))
+    y= torch.from_numpy(y.reshape(1, h, w))
+    w_loc = torch.FloatTensor(w, h, w).zero_()
+    h_loc = torch.FloatTensor(h, h, w).zero_()
+    w_loc.scatter_(dim=0, index=x, value=1)
+    h_loc.scatter_(dim=0, index=y, value=1)
+    loc = torch.cat([h_loc, w_loc], 0)
+    loc = loc.expand(batch, h + w, h, w)
+    net = torch.cat([net, loc], 1)
+    return net

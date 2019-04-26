@@ -5,6 +5,7 @@ from torch.autograd import Variable
 from torch.nn.parameter import Parameter
 from torchsummary import summary
 from models.fracPickup import fracPickup
+from models.OctaveConv import FirstOctaveCBR, LastOCtaveCBR, OctaveCBR
 
 
 class BidirectionalLSTM(nn.Module):
@@ -295,7 +296,7 @@ class GRCNN(nn.Module):
         self.conv6 = nn.Conv2d(512, 512, 2, 1, 0)
         self.bn6 = nn.BatchNorm2d(512)
 
-        print("Initializing GRCNN net weights...")
+        # print("Initializing GRCNN net weights...")
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 torch.nn.init.kaiming_normal_(m.weight.data)
@@ -319,14 +320,55 @@ class GRCNN(nn.Module):
         return x
 
 
+class OctaveNet(nn.Module):
+    def __init__(self, nc):
+        super(OctaveNet, self).__init__()
+        self.first = FirstOctaveCBR(nc, 64, alpha=.125)
+        self.second = OctaveCBR(64, 128, alpha=.125, stride=2)
+        self.third = OctaveCBR(128, 128, alpha=.125)
+        self.fourth = OctaveCBR(128, 128, alpha=.125, stride=2, scale=25 / 12)
+        self.last = LastOCtaveCBR(128, 256, alpha=.125, scale=25 / 12)
+        self.pool3 = nn.MaxPool2d((2, 2), (2, 1), (0, 1))
+        self.GRCLconv = GRCL(256, 512)
+        self.pool4 = nn.MaxPool2d((2, 2), (2, 1), (0, 1))
+        self.conv = nn.Conv2d(512, 512, 2, 1, 0)
+        self.bn = nn.BatchNorm2d(512)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', a=0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, t):
+        t_h, t_l = self.first(t)
+        t_h, t_l = self.second((t_h, t_l))
+        t_h, t_l = self.third((t_h, t_l))
+        t_h, t_l = self.fourth((t_h, t_l))
+        out = self.last((t_h, t_l))
+
+        out = self.pool3(out)
+        out = self.GRCLconv(out)
+        out = self.pool4(out)
+        out = self.conv(out)
+        out = self.bn(out)
+
+        return out
+
+
 class ASRN(nn.Module):
 
     def __init__(self, imgH, nc, nclass, nh, CUDA=True):
         super(ASRN, self).__init__()
         assert imgH % 16 == 0, 'imgH must be a multiple of 16'
 
-        # self.cnn = ResNet(nc)
-        self.cnn = GRCNN(imgH, nc)
+        # self.cnn1 = ResNet(nc)
+        self.cnn1 = GRCNN(imgH, nc)
+        self.cnn2 = OctaveNet(nc)
+        self.down = nn.Sequential(
+            nn.Conv2d(512, 512, 2, 1, 1),
+            nn.AvgPool2d(2, (2, 1))
+        )
 
         self.rnn = nn.Sequential(
             BidirectionalLSTM(512, nh, nh),
@@ -345,7 +387,12 @@ class ASRN(nn.Module):
 
     def forward(self, input, length, text, text_rev, test=False):
         # conv features
-        conv = self.cnn(input)
+        conv1 = self.cnn1(input)
+        conv2 = self.cnn2(input)
+
+        conv = torch.cat([conv1, conv2], dim=2)
+
+        conv = self.down(conv)
 
         b, c, h, w = conv.size()
         assert h == 1, "the height of conv must be 1"
@@ -366,7 +413,9 @@ class ASRN(nn.Module):
 
 
 if __name__ == '__main__':
-    model = ResNet(c_in=3)
-    # model = GRCNN(imgH=32, nc=3)
-    summary(model, (3, 32, 100), device='cpu')
-
+    # model = ResNet(c_in=3).cuda()
+    model = ASRN(imgH=32, nc=3, nclass=10, nh=128).cuda()
+    # model = GRCNN(imgH=32, nc=3).cuda()
+    inp = torch.Tensor(1, 3, 32, 100).cuda()
+    out = model(inp, length=10, text=None, text_rev=None)
+    print(out.shape)

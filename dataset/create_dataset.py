@@ -1,16 +1,10 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-
-import io
+from __future__ import print_function
 import os
-import sys
-
 import cv2
 import lmdb  # install lmdb by "pip install lmdb"
 import numpy as np
-
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
 
 def checkImageIsValid(imageBin):
     if imageBin is None:
@@ -35,7 +29,7 @@ def writeCache(env, cache):
 # outputPath:输出路径
 # imagePathList:图片路径List
 # labelList:标签List
-def createDataset(outputPath, imagePathList, labelList, lexiconList=None, checkValid=True):
+def createDataset(outputPath, root, imagePathList, labelList=None, checkValid=True):
     """
     Create LMDB dataset for CRNN training.
     ARGS:
@@ -47,7 +41,7 @@ def createDataset(outputPath, imagePathList, labelList, lexiconList=None, checkV
     """
 
     # imagePathList 对应和 labelList 配套
-    assert (len(imagePathList) == len(labelList))
+    # assert (len(imagePathList) == len(labelList))
 
     # 获取数量
     nSamples = len(imagePathList)
@@ -57,29 +51,27 @@ def createDataset(outputPath, imagePathList, labelList, lexiconList=None, checkV
     cnt = 1
     for i in range(nSamples):
         imagePath = imagePathList[i]
-        label = labelList[i]
+        # label = labelList[i]
+        label = '1'
 
         # 判断是否存在路径
-        if not os.path.exists(imagePath):
+        if not os.path.exists(os.path.join(root, imagePath)):
             print('%s does not exist' % imagePath)
             continue
         # 直接读取图片
-        with open(imagePath, 'r') as f:
+        with open(os.path.join(root, imagePath), 'r') as f:
             imageBin = f.read()
         if checkValid:
             if not checkImageIsValid(imageBin):
                 print('%s is not a valid image' % imagePath)
                 continue
 
-        imageKey = 'image-%09d' % cnt
+        imageKey = imagePath.split('.')[0]
         labelKey = 'label-%09d' % cnt
         cache[imageKey] = imageBin
 
         cache[labelKey] = label
 
-        if lexiconList:
-            lexiconKey = 'lexicon-%09d' % cnt
-            cache[lexiconKey] = ' '.join(lexiconList[i])
         if cnt % 1000 == 0:
             writeCache(env, cache)
             cache = {}
@@ -92,15 +84,22 @@ def createDataset(outputPath, imagePathList, labelList, lexiconList=None, checkV
 
 
 if __name__ == '__main__':
-    env = lmdb.open('ArTtest', max_readers=1, readonly=True, lock=False, readahead=False, meminit=False)
+    # imagePathList, labelList = [], []
+    # for file_name in ['ArTtrain-sp.txt', 'LSVTtrain-sp.txt']:
+    #     with open(file_name, 'r') as file:
+    #         for line in file:
+    #             imagePathList.append(line.split(' ', 1)[0])
+                # labelList.append(line.split(' ', 1)[1])
+    # imagePathList = os.listdir('ArTtest_final_ori')
+    # createDataset('ArTtest_final', 'ArTtest_final_ori', imagePathList)
+    env = lmdb.open(
+        'ArTtest_final',
+        max_readers=1,
+        readonly=True,
+        lock=False,
+        readahead=False,
+        meminit=False)
     with env.begin(write=False) as txn:
-        # nSamples = txn.get('nSamples'.encode())
-        # img_buf = txn.get(('gt_%d' % 1).encode())
-        # buf = six.BytesIO()
-        # buf.write(img_buf)
-        # buf.seek(0)
-        # img = np.array(Image.open(buf))
-        lmdb_cursor = txn.cursor()
-        for key, val in lmdb_cursor:
-            print(key)
-    # print(img.shape)
+        for key, _ in txn.cursor():
+            if 'gt' in str(key):
+                print(key)

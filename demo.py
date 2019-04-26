@@ -29,7 +29,7 @@ if os.path.isfile(model_path):
 MORAN.eval()
 
 converter = utils.strLabelConverterForAttention(alphabet, ':')
-pred_dataset = dataset.lmdbDataset(root='dataset/ArTtest', transform=dataset.resizeNormalize((100, 32)))
+pred_dataset = dataset.lmdbDataset(root='dataset/ArTtest_final', transform=dataset.resizeNormalize((100, 32)))
 pred_loader = torch.utils.data.DataLoader(
         pred_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers)
 
@@ -40,7 +40,7 @@ t, l = converter.encode(['0'*max_iter] * batch_size, scanned=True)
 utils.loadData(text, t)
 utils.loadData(length, l)
 
-f = open('./pred.txt', 'w', encoding='utf-8')
+f = open('logger/pred.txt', 'w', encoding='utf-8')
 
 for i, (img_keys, cpu_images, _, _) in enumerate(pred_loader):
     utils.loadData(image, cpu_images)
@@ -57,16 +57,18 @@ for i, (img_keys, cpu_images, _, _) in enumerate(pred_loader):
     preds1_prob = preds1_prob.view(-1)
     sim_preds1 = converter.decode(preds1.data, length.data)
     sim_preds = []
+    sim_prob = []
     for j in range(cpu_images.size(0)):
         text_begin = 0 if j == 0 else length.data[:j].sum()
-        if torch.mean(preds0_prob[text_begin:text_begin + len(sim_preds0[j].split('$')[0] + '$')]).item() > \
-                torch.mean(preds1_prob[text_begin:text_begin + len(sim_preds1[j].split('$')[0] + '$')]).item():
-            sim_preds.append(sim_preds0[j].split('$')[0] + '$')
+        preds0_p = torch.mean(preds0_prob[text_begin:text_begin + len(sim_preds0[j].split('$')[0] + '$')]).item()
+        preds1_p = torch.mean(preds1_prob[text_begin:text_begin + len(sim_preds1[j].split('$')[0] + '$')]).item()
+        if preds0_p > preds1_p:
+            sim_preds.append(sim_preds0[j].split('$')[0])
+            sim_prob.append(preds0_p)
         else:
-            sim_preds.append(sim_preds1[j].split('$')[0][-1::-1] + '$')
+            sim_preds.append(sim_preds1[j].split('$')[0][-1::-1])
+            sim_prob.append(preds1_p)
 
-    for key, pred in zip(img_keys, sim_preds):
-        f.write('%s:\t%s\n' % (key, pred))
-        if i % 100 == 0:
-            print('%s:\t%s' % (key, pred))
+    for key, probility, pred in zip(img_keys, sim_prob, sim_preds):
+        f.write('%s:\t\t\t%.3f%%\t%s\n' % (key, probility * 100, pred))
 f.close()
