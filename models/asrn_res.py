@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.nn.parameter import Parameter
-from torchsummary import summary
+
+from models.convnet import se_resnet50
 from models.fracPickup import fracPickup
-from models.OctaveConv import FirstOctaveCBR, LastOCtaveCBR, OctaveCBR
 
 
 class BidirectionalLSTM(nn.Module):
@@ -160,218 +160,16 @@ class Attention(nn.Module):
             return probs_res, output_alpha
 
 
-class Residual_block(nn.Module):
-    def __init__(self, c_in, c_out, stride):
-        super(Residual_block, self).__init__()
-        self.downsample = None
-        flag = False
-        if isinstance(stride, tuple):
-            if stride[0] > 1:
-                self.downsample = nn.Sequential(nn.Conv2d(c_in, c_out, 3, stride, 1),
-                                                nn.BatchNorm2d(c_out, momentum=0.01))
-                flag = True
-        else:
-            if stride > 1:
-                self.downsample = nn.Sequential(nn.Conv2d(c_in, c_out, 3, stride, 1),
-                                                nn.BatchNorm2d(c_out, momentum=0.01))
-                flag = True
-        if flag:
-            self.conv1 = nn.Sequential(nn.Conv2d(c_in, c_out, 3, stride, 1),
-                                       nn.BatchNorm2d(c_out, momentum=0.01))
-        else:
-            self.conv1 = nn.Sequential(nn.Conv2d(c_in, c_out, 1, stride, 0),
-                                       nn.BatchNorm2d(c_out, momentum=0.01))
-        self.conv2 = nn.Sequential(nn.Conv2d(c_out, c_out, 3, 1, 1),
-                                   nn.BatchNorm2d(c_out, momentum=0.01))
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        residual = x
-        conv1 = self.conv1(x)
-        conv2 = self.conv2(conv1)
-        if self.downsample is not None:
-            residual = self.downsample(residual)
-        return self.relu(residual + conv2)
-
-
-class ResNet(nn.Module):
-    def __init__(self, c_in):
-        super(ResNet, self).__init__()
-        self.block0 = nn.Sequential(nn.Conv2d(c_in, 32, 3, 1, 1), nn.BatchNorm2d(32, momentum=0.01))
-        self.block1 = self._make_layer(32, 32, 2, 3)
-        self.block2 = self._make_layer(32, 64, 2, 4)
-        self.block3 = self._make_layer(64, 128, (2, 1), 6)
-        self.block4 = self._make_layer(128, 256, (2, 1), 6)
-        self.block5 = self._make_layer(256, 512, (2, 1), 3)
-
-    def _make_layer(self, c_in, c_out, stride, repeat=3):
-        layers = []
-        layers.append(Residual_block(c_in, c_out, stride))
-        for i in range(repeat - 1):
-            layers.append(Residual_block(c_out, c_out, 1))
-        return nn.Sequential(*layers)
-
-    def forward(self, x):
-        block0 = self.block0(x)
-        block1 = self.block1(block0)
-        block2 = self.block2(block1)
-        block3 = self.block3(block2)
-        block4 = self.block4(block3)
-        block5 = self.block5(block4)
-        return block5
-
-
-def conv3x3(in_planes, out_planes, stride=(1, 1)):
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3,
-                     stride=stride, padding=1, bias=False)
-
-
-def conv1x1(in_planes, out_planes, stride=(1, 1)):
-    return nn.Conv2d(in_planes, out_planes, kernel_size=1,
-                     stride=stride, padding=0, bias=False)
-
-
-class GRCL(nn.Module):
-    def __init__(self, inplanes, planes, stride=(1, 1)):
-        super(GRCL, self).__init__()
-        self.conv0 = conv3x3(inplanes, planes)
-        self.conv1 = conv1x1(inplanes, planes)
-        self.conv2 = conv3x3(planes, planes)
-        self.conv3 = conv1x1(planes, planes)
-        self.relu = nn.ReLU(inplace=True)
-        self.sigmoid = nn.Sigmoid()
-        self.stride = stride
-
-        self.bn0 = nn.BatchNorm2d(planes)
-        self.bn1 = nn.BatchNorm2d(planes)
-        self.bn2 = nn.BatchNorm2d(planes)
-        self.bn3 = nn.BatchNorm2d(planes)
-        self.bn4 = nn.BatchNorm2d(planes)
-        self.bn5 = nn.BatchNorm2d(planes)
-        self.bn6 = nn.BatchNorm2d(planes)
-        self.bn7 = nn.BatchNorm2d(planes)
-        self.bn8 = nn.BatchNorm2d(planes)
-        self.bn9 = nn.BatchNorm2d(planes)
-        self.bn10 = nn.BatchNorm2d(planes)
-
-    def forward(self, x):
-        b0 = self.bn0(self.conv0(x))
-        r0 = self.relu(b0)
-        n0 = self.bn1(self.conv1(x))
-
-        b1 = self.bn2(self.conv2(r0))
-        n1 = self.bn3(self.conv3(r0))
-        G1 = self.sigmoid(torch.add(n0, n1))
-        s1 = self.relu(torch.add(b0, self.bn4(G1 * b1)))
-
-        b2 = self.bn5(self.conv2(s1))
-        n2 = self.bn6(self.conv3(s1))
-        G2 = self.sigmoid(torch.add(n0, n2))
-        s2 = self.relu(torch.add(b0, self.bn7(G2 * b2)))
-
-        b3 = self.bn8(self.conv2(s2))
-        n3 = self.bn9(self.conv3(s2))
-        G3 = self.sigmoid(torch.add(n0, n3))
-        s3 = self.relu(torch.add(b0, self.bn10(G3 * b3)))
-
-        return s3
-
-
-class GRCNN(nn.Module):
-    def __init__(self, imgH, nc, leakyRelu=False):
-        super(GRCNN, self).__init__()
-        assert imgH % 16 == 0, 'Image height has to be a multiple of 16'
-
-        self.conv0 = conv3x3(nc, 64)
-        self.bn0 = nn.BatchNorm2d(64)
-        self.pool0 = nn.MaxPool2d(2, 2)
-        self.layer1 = GRCL(64, 128)
-        self.pool1 = nn.MaxPool2d(2, 2)
-        self.layer2 = GRCL(128, 256)
-        # self.layer3 = RCL(256, 256)
-        self.pool2 = nn.MaxPool2d((2, 2), (2, 1), (0, 1))
-        self.layer4 = GRCL(256, 512)
-        # self.layer5 = RCL(512, 512)
-        self.pool3 = nn.MaxPool2d((2, 2), (2, 1), (0, 1))
-        self.conv6 = nn.Conv2d(512, 512, 2, 1, 0)
-        self.bn6 = nn.BatchNorm2d(512)
-
-        # print("Initializing GRCNN net weights...")
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                torch.nn.init.kaiming_normal_(m.weight.data)
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-
-    def forward(self, x):
-        x = self.bn0(self.conv0(x))
-        x = self.pool0(x)
-        x = self.layer1(x)
-        x = self.pool1(x)
-        x = self.layer2(x)
-        # x = self.layer3(x)
-        x = self.pool2(x)
-        x = self.layer4(x)
-        # x = self.layer5(x)
-        x = self.pool3(x)
-        x = self.bn6(self.conv6(x))
-
-        return x
-
-
-class OctaveNet(nn.Module):
-    def __init__(self, nc):
-        super(OctaveNet, self).__init__()
-        self.first = FirstOctaveCBR(nc, 64, alpha=.125)
-        self.second = OctaveCBR(64, 128, alpha=.125, stride=2)
-        self.third = OctaveCBR(128, 128, alpha=.125)
-        self.fourth = OctaveCBR(128, 128, alpha=.125, stride=2, scale=25 / 12)
-        self.last = LastOCtaveCBR(128, 256, alpha=.125, scale=25 / 12)
-        self.pool3 = nn.MaxPool2d((2, 2), (2, 1), (0, 1))
-        self.GRCLconv = GRCL(256, 512)
-        self.pool4 = nn.MaxPool2d((2, 2), (2, 1), (0, 1))
-        self.conv = nn.Conv2d(512, 512, 2, 1, 0)
-        self.bn = nn.BatchNorm2d(512)
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', a=0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, t):
-        t_h, t_l = self.first(t)
-        t_h, t_l = self.second((t_h, t_l))
-        t_h, t_l = self.third((t_h, t_l))
-        t_h, t_l = self.fourth((t_h, t_l))
-        out = self.last((t_h, t_l))
-
-        out = self.pool3(out)
-        out = self.GRCLconv(out)
-        out = self.pool4(out)
-        out = self.conv(out)
-        out = self.bn(out)
-
-        return out
-
-
 class ASRN(nn.Module):
 
     def __init__(self, imgH, nc, nclass, nh, CUDA=True):
         super(ASRN, self).__init__()
         assert imgH % 16 == 0, 'imgH must be a multiple of 16'
 
-        # self.cnn1 = ResNet(nc)
-        self.cnn1 = GRCNN(imgH, nc)
-        self.cnn2 = OctaveNet(nc)
-        self.down = nn.Sequential(
-            nn.Conv2d(512, 512, 2, 1, 1),
-            nn.AvgPool2d(2, (2, 1))
-        )
+        self.se_resnet50 = se_resnet50()
 
         self.rnn = nn.Sequential(
-            BidirectionalLSTM(512, nh, nh),
+            BidirectionalLSTM(2048, nh, nh),
             BidirectionalLSTM(nh, nh, nh),
         )
 
@@ -387,12 +185,7 @@ class ASRN(nn.Module):
 
     def forward(self, input, length, text, text_rev, test=False):
         # conv features
-        conv1 = self.cnn1(input)
-        conv2 = self.cnn2(input)
-
-        conv = torch.cat([conv1, conv2], dim=2)
-
-        conv = self.down(conv)
+        conv = self.se_resnet50(input)
 
         b, c, h, w = conv.size()
         assert h == 1, "the height of conv must be 1"
@@ -413,9 +206,7 @@ class ASRN(nn.Module):
 
 
 if __name__ == '__main__':
-    # model = ResNet(c_in=3).cuda()
     model = ASRN(imgH=32, nc=3, nclass=10, nh=128).cuda()
-    # model = GRCNN(imgH=32, nc=3).cuda()
     inp = torch.Tensor(1, 3, 32, 100).cuda()
     out = model(inp, length=10, text=None, text_rev=None)
     print(out.shape)

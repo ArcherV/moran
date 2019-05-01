@@ -8,14 +8,12 @@ import warnings
 
 import numpy as np
 import torch.backends.cudnn as cudnn
-import torch.optim as optim
+import torch.argsim as argsim
 import torch.utils.data
-from tools.dataset import encode_coordinates_fn
 import tools.dataset as dataset
 import tools.utils as utils
 from models.moran import MORAN
 from tools.logger import logger
-from tools.utils import showAttention
 from wordlist import result
 
 warnings.filterwarnings('ignore')
@@ -35,7 +33,7 @@ class params:
     niter = 3000
     lr = 1
     cuda = True
-    MORAN = 'logger/model_best.pth'
+    model_path = 'logger/model_best.pth'
     alphabet = ''
     sep = ':'
     displayInterval = 100
@@ -45,25 +43,25 @@ class params:
     workers = 4
 
 
-opt = params()
+args = params()
 
 # Modify
-opt.alphabet = result
+args.alphabet = result
 
-opt.manualSeed = random.randint(1, 10000)  # fix seed
-random.seed(opt.manualSeed)
-np.random.seed(opt.manualSeed)
-torch.manual_seed(opt.manualSeed)
+args.manualSeed = random.randint(1, 10000)  # fix seed
+random.seed(args.manualSeed)
+np.random.seed(args.manualSeed)
+torch.manual_seed(args.manualSeed)
 
 cudnn.benchmark = True
 
 log = logger('logger')
 
-train_dataset = dataset.lmdbDataset(root=opt.trainroot,
-                                    transform=dataset.resizeNormalize((opt.imgW, opt.imgH)))
+train_dataset = dataset.lmdbDataset(root=args.trainroot,
+                                    transform=dataset.resizeNormalize((args.imgW, args.imgH)))
 '''
-train_cvpr_dataset = dataset.lmdbDataset(root=opt.train_cvpr, 
-    transform=dataset.resizeNormalize((opt.imgW, opt.imgH)))
+train_cvpr_dataset = dataset.lmdbDataset(root=args.train_cvpr, 
+    transform=dataset.resizeNormalize((args.imgW, args.imgH)))
 assert train_cvpr_dataset
 '''
 '''
@@ -71,29 +69,29 @@ train_dataset = torch.utils.data.ConcatDataset([train_nips_dataset, train_cvpr_d
 '''
 
 train_loader = torch.utils.data.DataLoader(
-    train_dataset, batch_size=opt.batchSize,
-    shuffle=False, sampler=dataset.randomSequentialSampler(train_dataset, opt.batchSize),
-    num_workers=opt.workers)
+    train_dataset, batch_size=args.batchSize,
+    shuffle=False, sampler=dataset.randomSequentialSampler(train_dataset, args.batchSize),
+    num_workers=args.workers)
 
-test_dataset = dataset.lmdbDataset(root=opt.valroot,
-                                   transform=dataset.resizeNormalize((opt.imgW, opt.imgH)))
+test_dataset = dataset.lmdbDataset(root=args.valroot,
+                                   transform=dataset.resizeNormalize((args.imgW, args.imgH)))
 
-nclass = len(opt.alphabet.split(opt.sep))
-# nc = 3 + opt.imgH + opt.imgW
+nclass = len(args.alphabet.split(args.sep))
+# nc = 3 + args.imgH + args.imgW
 nc = 3
 
-converter = utils.strLabelConverterForAttention(opt.alphabet, opt.sep)
+converter = utils.strLabelConverterForAttention(args.alphabet, args.sep)
 criterion = torch.nn.CrossEntropyLoss()
 
-MORAN = MORAN(nc, nclass, opt.nh, opt.targetH, opt.targetW,
-              inputDataType='torch.cuda.FloatTensor' if opt.cuda else 'torch.FloatTensor', CUDA=opt.cuda, log=log)
+MORAN = MORAN(nc, nclass, args.nh, args.targetH, args.targetW,
+              CUDA=args.cuda)
 
-image = torch.FloatTensor(opt.batchSize, nc, opt.imgH, opt.imgW)
-text = torch.LongTensor(opt.batchSize * 5)
-text_rev = torch.LongTensor(opt.batchSize * 5)
-length = torch.IntTensor(opt.batchSize)
+image = torch.FloatTensor(args.batchSize, nc, args.imgH, args.imgW)
+text = torch.LongTensor(args.batchSize * 5)
+text_rev = torch.LongTensor(args.batchSize * 5)
+length = torch.IntTensor(args.batchSize)
 
-if opt.cuda:
+if args.cuda:
     MORAN.cuda()
     image = image.cuda()
     text = text.cuda()
@@ -104,28 +102,27 @@ if opt.cuda:
 loss_avg = utils.averager()
 
 # setup optimizer
-if opt.optimizer == 'adam':
-    optimizer = optim.Adam(MORAN.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-elif opt.optimizer == 'adadelta':
-    optimizer = optim.Adadelta(MORAN.parameters(), lr=opt.lr)
-elif opt.optimizer == 'sgd':
-    optimizer = optim.SGD(MORAN.parameters(), lr=opt.lr, momentum=0.9)
+if args.optimizer == 'adam':
+    optimizer = argsim.Adam(MORAN.parameters(), lr=args.lr, betas=(args.beta1, 0.999))
+elif args.optimizer == 'adadelta':
+    optimizer = argsim.Adadelta(MORAN.parameters(), lr=args.lr)
+elif args.optimizer == 'sgd':
+    optimizer = argsim.SGD(MORAN.parameters(), lr=args.lr, momentum=0.9)
 else:
-    optimizer = optim.RMSprop(MORAN.parameters(), lr=opt.lr)
+    optimizer = argsim.RMSprop(MORAN.parameters(), lr=args.lr)
 
-if os.path.isfile(opt.MORAN):
-    print("=> loading checkpoint '{}'".format(opt.MORAN))
-    checkpoint = torch.load(opt.MORAN)
-    opt.start_epoch = checkpoint['epoch']
-    best_pred = checkpoint['best_pred']
+if os.path.isfile(args.model_path):
+    print('=>loading pretrained model from %s for val only.' % args.resume)
+    checkpoint = torch.load(args.model_path)
     pretrained_model = checkpoint['state_dict']
     model_dict = MORAN.state_dict()
     pretrained_model = {k: v for k, v in pretrained_model.items() if k in model_dict}
     model_dict.update(pretrained_model)
     MORAN.load_state_dict(model_dict)
     optimizer.load_state_dict(checkpoint['optimizer'])
-    print("=> loaded checkpoint '{}' (epoch {})"
-          .format(opt.MORAN, checkpoint['epoch']))
+    args.start_epoch = checkpoint['epoch'] + 1
+    print("=> loaded checkpoint '{}' (epoch {}) (accuracy {})".format(args.model_path, checkpoint['epoch'],
+                                                                      checkpoint['best_pred']))
 else:
     print('Training from scratch!')
 
@@ -153,7 +150,7 @@ def levenshtein(s1, s2):
 
 def val(dataset, criterion, max_iter=10000, steps=0):
     data_loader = torch.utils.data.DataLoader(
-        dataset, shuffle=False, batch_size=opt.batchSize, num_workers=opt.workers)  # opt.batchSize
+        dataset, shuffle=False, batch_size=args.batchSize, num_workers=args.workers)  # args.batchSize
     val_iter = iter(data_loader)
     max_iter = min(max_iter, len(data_loader))
     n_correct = 0
@@ -173,7 +170,7 @@ def val(dataset, criterion, max_iter=10000, steps=0):
         utils.loadData(text, t)
         utils.loadData(text_rev, t_rev)
         utils.loadData(length, l)
-        preds0, alpha0, preds1, alpha1 = MORAN(image, length, text, text_rev, debug=False, test=True, steps=steps)
+        preds0, _, preds1, _ = MORAN(image, length, text, text_rev, debug=False, test=True, steps=steps)
         cost = criterion(torch.cat([preds0, preds1], 0), torch.cat([text, text_rev], 0))
         preds0_prob, preds0 = preds0.max(1)
         preds0 = preds0.view(-1)
@@ -184,18 +181,13 @@ def val(dataset, criterion, max_iter=10000, steps=0):
         preds1_prob = preds1_prob.view(-1)
         sim_preds1 = converter.decode(preds1.data, length.data)
         sim_preds = []
-        alpha = []
-        alpha0 = alpha0.detach().cpu().numpy()
-        alpha1 = alpha1.detach().cpu().numpy()
         for j in range(cpu_images.size(0)):
             text_begin = 0 if j == 0 else length.data[:j].sum()
             if torch.mean(preds0_prob[text_begin:text_begin + len(sim_preds0[j].split('$')[0] + '$')]).item() > \
                     torch.mean(preds1_prob[text_begin:text_begin + len(sim_preds1[j].split('$')[0] + '$')]).item():
                 sim_preds.append(sim_preds0[j].split('$')[0] + '$')
-                alpha.append(alpha0[:, :, j])
             else:
                 sim_preds.append(sim_preds1[j].split('$')[0][-1::-1] + '$')
-                alpha.append(alpha1[-1::-1, :, j])
 
         # img_shape = cpu_images.shape[3] / 100, cpu_images.shape[2] / 100
         # input_seq = cpu_texts[0]
@@ -250,14 +242,14 @@ def save_checkpoint(state, is_best, filename='logger/checkpoint.pth'):
 if __name__ == '__main__':
     t0 = time.time()
     acc, acc_tmp = 0, 0
-    for epoch in range(opt.niter):
+    for epoch in range(args.niter):
         print('Begin epoch %d' % epoch)
         train_iter = iter(train_loader)
         i = 0
         while i < len(train_loader):
             # print("main函数里,可迭代次数为 %d" %  len(train_loader))
             steps = i + epoch * len(train_loader)
-            if steps % opt.valInterval == 0:
+            if steps % args.valInterval == 0:
                 MORAN.eval()
 
                 print('Begin validating')
@@ -275,7 +267,7 @@ if __name__ == '__main__':
             cost = trainBatch()
             loss_avg.add(cost)
 
-            if steps % opt.displayInterval == 0:
+            if steps % args.displayInterval == 0:
                 log.scalar_summary('Train/loss', loss_avg.val(), steps)
                 log.scalar_summary('Train/speed', steps / (time.time() - t0), steps)
                 loss_avg.reset()

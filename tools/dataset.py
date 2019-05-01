@@ -8,7 +8,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 from torch.utils.data import sampler
 
-from tools.words import word
+from wordlist import word
 
 
 class lmdbDataset(Dataset):
@@ -32,37 +32,35 @@ class lmdbDataset(Dataset):
 
         self.transform = transform
         self.alphabet = alphabet
+        self.file = list()
+
+        with self.env.begin(write=False) as txn:
+            for key, _ in txn.cursor():
+                if b'gt' in key:
+                    self.file.append(key.decode())
+        self.file = sorted(self.file, key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2]), int(x.split('_')[3])))
 
     def __len__(self):
         return self.nSamples
 
     def __getitem__(self, index):
         # print("在tools.dataset里,",index)
-        index += 1
+        # index += 1
         with self.env.begin(write=False) as txn:
-            img_key = 'image-%09d' % index  # For training
+            # img_key = 'image-%09d' % index  # For training
             # img_key = 'gt_%d' % index
+            img_key = self.file[index]
             imageBuf = np.fromstring(txn.get(img_key.encode()), dtype=np.uint8)
-            img = cv2.imdecode(imageBuf, cv2.IMREAD_COLOR)
-
-            label_key = 'label-%09d' % index
-            label = str(txn.get(label_key.encode()).decode('utf-8'))
-            # label = '1'
-
-            label = ''.join(label[i] if label[i].lower() in self.alphabet else ''
-                            for i in range(len(label)))
-            # print("在tools.dataset里,label为",label)
-            if len(label) <= 0:
+            try:
+                img = cv2.imdecode(imageBuf, cv2.IMREAD_GRAYSCALE)
+            except:
                 return self[index + 1]
-            label_rev = label[-1::-1]
-            label_rev += '$'
-            label += '$'
 
             if self.transform:
                 img = self.transform(img)
 
-        return img, label, label_rev  # For training
-        # return img_key, img, label, label_rev
+        # return img, label, label_rev  # For training
+        return img_key, img
 
 
 class resizeNormalize(object):
@@ -73,6 +71,7 @@ class resizeNormalize(object):
 
     def __call__(self, img):
         img = cv2.resize(img, self.size)
+        img = img[:, :, np.newaxis]
         img = self.toTensor(img)
         img.sub_(0.5).div_(0.5)
         return img

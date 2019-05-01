@@ -6,6 +6,7 @@ import cv2
 import lmdb  # install lmdb by "pip install lmdb"
 import numpy as np
 
+
 def checkImageIsValid(imageBin):
     if imageBin is None:
         return False
@@ -29,7 +30,7 @@ def writeCache(env, cache):
 # outputPath:输出路径
 # imagePathList:图片路径List
 # labelList:标签List
-def createDataset(outputPath, root, imagePathList, labelList=None, checkValid=True):
+def createDataset(outputPath, root, imagePathList, checkValid=True):
     """
     Create LMDB dataset for CRNN training.
     ARGS:
@@ -51,8 +52,6 @@ def createDataset(outputPath, root, imagePathList, labelList=None, checkValid=Tr
     cnt = 1
     for i in range(nSamples):
         imagePath = imagePathList[i]
-        # label = labelList[i]
-        label = '1'
 
         # 判断是否存在路径
         if not os.path.exists(os.path.join(root, imagePath)):
@@ -61,16 +60,14 @@ def createDataset(outputPath, root, imagePathList, labelList=None, checkValid=Tr
         # 直接读取图片
         with open(os.path.join(root, imagePath), 'r') as f:
             imageBin = f.read()
-        if checkValid:
-            if not checkImageIsValid(imageBin):
-                print('%s is not a valid image' % imagePath)
-                continue
+        # if checkValid:
+        #     if not checkImageIsValid(imageBin):
+        #         print('%s is not a valid image' % imagePath)
+        #         continue
 
         imageKey = imagePath.split('.')[0]
-        labelKey = 'label-%09d' % cnt
+        imageKey = '_'.join(imageKey.split('/'))
         cache[imageKey] = imageBin
-
-        cache[labelKey] = label
 
         if cnt % 1000 == 0:
             writeCache(env, cache)
@@ -92,14 +89,32 @@ if __name__ == '__main__':
                 # labelList.append(line.split(' ', 1)[1])
     # imagePathList = os.listdir('ArTtest_final_ori')
     # createDataset('ArTtest_final', 'ArTtest_final_ori', imagePathList)
-    env = lmdb.open(
-        'ArTtest_final',
-        max_readers=1,
-        readonly=True,
-        lock=False,
-        readahead=False,
-        meminit=False)
-    with env.begin(write=False) as txn:
-        for key, _ in txn.cursor():
-            if 'gt' in str(key):
-                print(key)
+    # root = 'left'
+    root = 'sp-crop'
+    img_list = os.listdir(root)
+    # image_list = list()
+    # for img in img_list:
+    #     char = os.listdir(os.path.join(root, img))
+    #     for image in char:
+    #         image_list.append(os.path.join(img, image))
+    createDataset(root, root, img_list)
+
+    # env = lmdb.open(
+    #     'dataset/LSVT-hp',
+    #     max_readers=1,
+    #     readonly=True,
+    #     lock=False,
+    #     readahead=False,
+    #     meminit=False)
+    # with env.begin(write=False) as txn:
+    #     for key, _ in txn.cursor():
+    #         print(key)
+    # file = list()
+    # with env.begin(write=False) as txn:
+    #     for key, _ in txn.cursor():
+    #         if b'gt' in key:
+    #             file.append(key.decode())
+    # file = sorted(file, key=lambda x: (int(x.split('_')[1].split('/')[0]), int(x.split('/')[-1])))
+    # with open('data.txt', 'w') as f:
+    #     for x in file:
+    #         f.write(x + '\n')
